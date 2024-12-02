@@ -1,0 +1,224 @@
+---
+title: "Untitled"
+output: html_document
+date: "2024-10-28"
+---
+
+```{r setup, include=FALSE}
+install.packages("readxl")  
+install.packages("tidyverse")
+install.packages("simr")
+library(simr)
+library(readxl) 
+library(tidyverse)
+data <- read_excel("C:/Users/Gabrielle/Documents/GitHub/gabrg2_cko_syt2_v1_syn_bot/Combined_211028_perisomatic-set1_647-Gph_594-Syt2_405-Neun_60X-5_results.xlsx")
+```
+
+```{r}
+# Extract animal information
+
+filtered_data <- subset(data, Counted != 0)
+
+data_extracted_filtered_1 <- filtered_data %>%
+  mutate(
+    animal_id = str_extract(Label, "A(\\d+)"),
+    section_number = str_extract(Label, "S(\\d+)"),
+    hemisphere_number = str_extract(Label, "H(\\d+)"),
+  ) %>%
+  mutate(
+    animal_id = as.integer(str_remove(animal_id, "A")),
+    section_number = as.integer(str_remove(section_number, "S")),
+    hemisphere_number = as.integer(str_remove(hemisphere_number, "H")),
+    genotype = case_when(
+      animal_id %in% c(1, 3, 6) ~ "WT",
+      TRUE ~ "KO"
+    )
+  )
+
+```
+
+```{r}
+# Group by 'counted' and summarize the 'coloc' values, while keeping other columns
+data_extracted_filtered <- data_extracted_filtered_1 %>%
+  group_by(Counted) %>%
+  summarize(
+    colocsPunctaCount = sum(colocsPunctaCount),
+    animal_id = paste(unique(animal_id), collapse = ", "),
+    genotype = paste(unique(genotype), collapse = ", ")
+  )
+```
+
+```{r}
+summary_data_filtered <- data_extracted_filtered %>%
+  group_by(genotype) %>%
+  summarise(avg_colocs = mean(colocsPunctaCount))
+```
+
+```{r}
+summary_animal_data_filtered <- data_extracted_filtered %>%
+  group_by(animal_id, genotype) %>%
+  summarise(avg_colocs = mean(colocsPunctaCount))
+```
+
+```{r}
+superplot_filtered <- ggplot(data_extracted_filtered, aes(x = genotype, y = colocsPunctaCount, color = factor(animal_id))) +
+  
+  # Dots for each animal
+  geom_point(position = position_jitter(width = 0.1), alpha = 0.7) +
+  
+  # Mean values
+  geom_bar(data = summary_data_filtered, aes(x = genotype, y = avg_colocs), stat = "identity", color = "gray", alpha = 0.5) +
+  labs(title = "Ssyt+/Geph Colocs", x = "Animal Type", y = "Coloc Counts") +
+  
+  # Color
+  theme_minimal() +
+  theme(legend.position = "top") +
+  
+  #Animals
+  geom_point(data=summary_animal_data_filtered, aes(x = genotype, y = avg_colocs), size=5)
+
+print(superplot_filtered)
+```
+```{r}
+library(lme4)
+options(contrasts = c("contr.sum","contr.poly"))
+teachingData<-read_csv("C:/Users/Gabrielle/Documents/GitHub/gabrg2_cko_syt2_v1_syn_bot/ttest_nested_maxwell_16_4.csv")
+model<-lmer(Inductive ~ Condition + (1|Room:Condition), 
+data = teachingData, REML = TRUE)
+summary(model)
+anova(model)
+```
+```{r}
+# Finding the p-value.
+t_stat = 1.792
+df = 4
+p_value=2 * (1 - pt(abs(t_stat), df))
+p_value
+summary(model)$coefficients
+```
+```{r}
+library(lme4)
+options(contrasts = c("contr.sum","contr.poly"))
+model<-lmer(colocsPunctaCount ~ genotype + (1|animal_id:genotype), 
+data = data_extracted_filtered, REML = TRUE)
+summary(model)
+anova(model)
+```
+```{r}
+# Finding the p-value.
+t_stat = summary(model)$coefficients[6]
+df = 4
+p_value=2 * (1 - pt(abs(t_stat), df))
+p_value
+
+```
+
+
+
+```{r}
+# Gives the p-value for the t-Test of variable 1 and 2
+ttest1 <- t.test(colocsPunctaCount  ~ genotype, data_extracted_filtered, alternative = "two.sided", var.equal = TRUE, conf.level = 0.95)
+ttest1p <- ttest1[["p.value"]]
+ttest1
+ttest1p
+```
+
+```{r}
+#Projected N Calculation from filtered data
+
+sd_KO <- sd(summary_animal_data_filtered$avg_colocs[summary_animal_data_filtered$genotype == "KO"])
+sd_WT <- sd(summary_animal_data_filtered$avg_colocs[summary_animal_data_filtered$genotype == "WT"])
+
+sd1 <- sd_WT
+sd1
+sd2 <- sd_KO
+sd2
+sd_pooled <- sqrt((sd1^2 +sd2^2) / 2)
+
+mu1 <- 30.93333
+mu2 <- 22.66667
+d <- (mu1 - mu2) / sd_pooled
+
+n_i <- power.t.test(d = d, power = 0.8, sig.level = 0.05)
+n_i
+```
+```{r}
+# Start by increasing the sample size to find the required sample size for 80% power
+model_extended_animal <- extend(model, along = "animal_id", n = 50)  # Adjust `n` to the number of replicates per group
+
+# Perform the power analysis with the extended sample size
+power_extended_animal <- powerSim(model_extended, test = fixed("genotype", "anova"), nsim = 100)
+
+# Print the power result for the extended model
+print(power_extended_animal)
+
+# Start by increasing the sample size to find the required sample size for 80% power
+#model_extended_cell <- extend(model, within = "animal_id", n = 30)  # Adjust `n` to the number of replicates per group
+
+# Perform the power analysis with the extended sample size
+#power_extended_cell <- powerSim(model_extended_cell, test = fixed("genotype", "anova"), nsim = 100)
+
+# Print the power result for the extended model
+#print(power_extended_cell)
+
+p_curve_treat <- powerCurve(model_extended_animal, test = fixed("genotype", "anova"), along="animal_id", breaks=c(5, 10, 15, 20, 25, 30, 35, 40, 45), nsim = 100)
+p_curve_treat
+plot(p_curve_treat)
+
+# Repeat increasing the sample size until the power reaches or exceeds 0.80
+```
+
+
+```{r}
+# Extract animal information
+
+data_extracted <- data %>%
+  mutate(
+    animal_id = str_extract(Label, "A(\\d+)"),
+    section_number = str_extract(Label, "S(\\d+)"),
+    hemisphere_number = str_extract(Label, "H(\\d+)"),
+  ) %>%
+  mutate(
+    animal_id = as.integer(str_remove(animal_id, "A")),
+    section_number = as.integer(str_remove(section_number, "S")),
+    hemisphere_number = as.integer(str_remove(hemisphere_number, "H")),
+    genotype = case_when(
+      animal_id %in% c(1, 3, 6) ~ "WT",
+      TRUE ~ "KO"
+    )
+  )
+
+```
+
+```{r}
+summary_data <- data_extracted %>%
+  group_by(genotype) %>%
+  summarise(avg_colocs = mean(colocsPunctaCount))
+```
+
+```{r}
+summary_animal_data <- data_extracted %>%
+  group_by(animal_id, genotype) %>%
+  summarise(avg_colocs = mean(colocsPunctaCount))
+```
+
+
+```{r}
+superplot <- ggplot(data_extracted, aes(x = genotype, y = colocsPunctaCount, color = factor(animal_id))) +
+  
+  # Dots for each animal
+  geom_point(position = position_jitter(width = 0.1), alpha = 0.7) +
+  
+  # Mean values
+  geom_bar(data = summary_data, aes(x = genotype, y = avg_colocs), stat = "identity", color = "gray", alpha = 0.5) +
+  labs(title = "Ssyt+/Geph Colocs", x = "Animal Type", y = "Coloc Counts") +
+  
+  # Color
+  theme_minimal() +
+  theme(legend.position = "top") +
+  
+  #Animals
+  geom_point(data=summary_animal_data, aes(x = genotype, y = avg_colocs), size=5)
+
+print(superplot)
+```
